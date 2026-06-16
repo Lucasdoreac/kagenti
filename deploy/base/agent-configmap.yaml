@@ -5,10 +5,41 @@ metadata:
 data:
   skills.json: |
     [
-      {"name": "get_patient",   "description": "Busca registro de paciente por ID",      "params": ["patient_id"],          "upstream": "/patients/{patient_id}"},
-      {"name": "list_patients", "description": "Lista todos os pacientes",               "params": [],                      "upstream": "/patients"},
-      {"name": "execute_shell", "description": "Executa comando shell no sandbox /app",  "params": ["command"],             "upstream": "internal_exec"},
-      {"name": "write_file",    "description": "Cria/sobrescreve arquivo em /app",        "params": ["filename", "content"], "upstream": "internal_exec"}
+      {
+        "name": "get_patient",
+        "description": "Busca registro de paciente por ID",
+        "params": ["patient_id"],
+        "upstream": "/patients/{patient_id}",
+        "system_instruction": "Use esta skill para recuperar dados de um único paciente. Passe apenas o ID numérico. Nunca infira IDs — solicite ao usuário se necessário."
+      },
+      {
+        "name": "list_patients",
+        "description": "Lista todos os pacientes",
+        "params": [],
+        "upstream": "/patients",
+        "system_instruction": "Use esta skill para obter a lista completa de pacientes. Não aceita filtros — para busca específica use get_patient."
+      },
+      {
+        "name": "execute_shell",
+        "description": "Executa comando shell no sandbox /tmp/workspace",
+        "params": ["command"],
+        "upstream": "internal_exec",
+        "system_instruction": "Use apenas para comandos de leitura e execução de código dentro do sandbox. Nunca execute comandos destrutivos (rm -rf, dd, mkfs) ou que modifiquem configurações do sistema."
+      },
+      {
+        "name": "write_file",
+        "description": "Cria ou sobrescreve arquivo em /tmp/workspace",
+        "params": ["filename", "content"],
+        "upstream": "internal_exec",
+        "system_instruction": "Use após validate_code confirmar que o código é válido. Nunca grave código que falhou na validação. O caminho é relativo ao workspace — não use ../ ou caminhos absolutos."
+      },
+      {
+        "name": "validate_code",
+        "description": "Valida sintaxe Python via ast.parse e ruff (se disponível)",
+        "params": ["code"],
+        "upstream": "internal_exec",
+        "system_instruction": "Sempre execute esta skill antes de write_file quando o conteúdo for código Python. Só prossiga com write_file se result.valid for true."
+      }
     ]
   main.py: |
     import json, urllib.request, urllib.error, http.server, subprocess, os
@@ -49,6 +80,30 @@ data:
 
     _INTERNAL = {"execute_shell": _exec_shell, "write_file": _write_file}
 
+    def _validate_code(params):
+        code = params.get("code", "")
+        if not code:
+            return 400, {"error": "code required"}
+        try:
+            import ast
+            ast.parse(code)
+        except SyntaxError as e:
+            return 200, {"valid": False, "error": f"SyntaxError: {e}"}
+        tmp = os.path.join(WORKSPACE, "_validate_tmp.py")
+        with open(tmp, "w") as f:
+            f.write(code)
+        try:
+            res = subprocess.run(["ruff", "check", "--select=E,F", tmp],
+                                 capture_output=True, text=True)
+            os.unlink(tmp)
+            if res.returncode != 0:
+                return 200, {"valid": False, "error": res.stdout.strip()}
+        except FileNotFoundError:
+            os.unlink(tmp)
+        return 200, {"valid": True}
+
+    _INTERNAL["validate_code"] = _validate_code
+
     def run_skill(name, params, caller=None):
         skill = _catalog.get(name)
         if not skill:
@@ -80,6 +135,21 @@ data:
                 return self.send_json(200, {"status": "ok"})
             if self.path == "/skills":
                 return self.send_json(200, list_skills())
+            if self.path == "/mcp":
+                tools = [
+                    {
+                        "name": s["name"],
+                        "description": s["description"],
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {p: {"type": "string"} for p in s["params"]},
+                            "required": s["params"]
+                        },
+                        "systemInstruction": s.get("system_instruction", "")
+                    }
+                    for s in _catalog.values()
+                ]
+                return self.send_json(200, {"schema": "mcp-tools/v1", "tools": tools})
             self.send_json(404, {"error": "not found"})
 
         def do_POST(self):

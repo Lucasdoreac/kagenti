@@ -1,6 +1,37 @@
 [
-  {"name": "get_patient",    "description": "Busca registro de paciente",          "params": ["patient_id"], "upstream": "/patients/{patient_id}"},
-  {"name": "list_patients",  "description": "Lista todos os pacientes",             "params": [],             "upstream": "/patients"},
-  {"name": "execute_shell",  "description": "Executa comando shell no sandbox /app","params": ["command"],    "upstream": "internal_exec"},
-  {"name": "write_file",     "description": "Cria/sobrescreve arquivo em /app",     "params": ["filename", "content"], "upstream": "internal_exec"}
+  {
+    "name": "get_patient",
+    "description": "Busca registro de paciente por ID",
+    "params": ["patient_id"],
+    "upstream": "/patients/{patient_id}",
+    "system_instruction": "Use esta skill para recuperar dados de um único paciente. Passe apenas o ID numérico. Nunca infira IDs — solicite ao usuário se necessário."
+  },
+  {
+    "name": "list_patients",
+    "description": "Lista todos os pacientes",
+    "params": [],
+    "upstream": "/patients",
+    "system_instruction": "Use esta skill para obter a lista completa de pacientes. Não aceita filtros — para busca específica use get_patient."
+  },
+  {
+    "name": "execute_shell",
+    "description": "Executa comando shell no sandbox /tmp/workspace",
+    "params": ["command"],
+    "upstream": "internal_exec",
+    "system_instruction": "Use apenas para comandos de leitura e execução de código dentro do sandbox. Nunca execute comandos destrutivos (rm -rf, dd, mkfs) ou que modifiquem configurações do sistema."
+  },
+  {
+    "name": "write_file",
+    "description": "Cria ou sobrescreve arquivo em /tmp/workspace",
+    "params": ["filename", "content"],
+    "upstream": "internal_exec",
+    "system_instruction": "Use após validate_code confirmar que o código é válido. Nunca grave código que falhou na validação. O caminho é relativo ao workspace — não use ../ ou caminhos absolutos."
+  },
+  {
+    "name": "validate_code",
+    "description": "Valida sintaxe Python via ast.parse e ruff (se disponível)",
+    "params": ["code"],
+    "upstream": "internal_exec",
+    "system_instruction": "Sempre execute esta skill antes de write_file quando o conteúdo for código Python. Só prossiga com write_file se result.valid for true."
+  }
 ]

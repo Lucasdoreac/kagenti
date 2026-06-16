@@ -38,6 +38,31 @@ def _write_file(params):
 
 _INTERNAL = {"execute_shell": _exec_shell, "write_file": _write_file}
 
+def _validate_code(params):
+    code = params.get("code", "")
+    if not code:
+        return 400, {"error": "code required"}
+    try:
+        import ast
+        ast.parse(code)
+    except SyntaxError as e:
+        return 200, {"valid": False, "error": f"SyntaxError: {e}"}
+    # ruff se disponível
+    tmp = os.path.join(WORKSPACE, "_validate_tmp.py")
+    with open(tmp, "w") as f:
+        f.write(code)
+    try:
+        res = subprocess.run(["ruff", "check", "--select=E,F", tmp],
+                             capture_output=True, text=True)
+        os.unlink(tmp)
+        if res.returncode != 0:
+            return 200, {"valid": False, "error": res.stdout.strip()}
+    except FileNotFoundError:
+        os.unlink(tmp)  # ruff não instalado — ast.parse já passou, aceita
+    return 200, {"valid": True}
+
+_INTERNAL["validate_code"] = _validate_code
+
 # --- executor genérico de skill ---
 def run_skill(name, params, caller=None):
     skill = _catalog.get(name)
@@ -71,6 +96,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.send_json(200, {"status": "ok"})
         if self.path == "/skills":
             return self.send_json(200, list_skills())
+        if self.path == "/mcp":
+            tools = [
+                {
+                    "name": s["name"],
+                    "description": s["description"],
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {p: {"type": "string"} for p in s["params"]},
+                        "required": s["params"]
+                    },
+                    "systemInstruction": s.get("system_instruction", "")
+                }
+                for s in _catalog.values()
+            ]
+            return self.send_json(200, {"schema": "mcp-tools/v1", "tools": tools})
         self.send_json(404, {"error": "not found"})
 
     def do_POST(self):
