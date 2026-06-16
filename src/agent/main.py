@@ -14,12 +14,37 @@ def list_skills():
             for s in _catalog.values()]
 
 # --- handlers locais (internal_exec) ---
+# CWD persistente entre chamadas de execute_shell
+_CWD = [WORKSPACE]
+
 def _exec_shell(params):
-    cmd = params.get("command", "")
+    cmd     = params.get("command", "")
+    timeout = int(params.get("timeout", 30))
     if not cmd:
         return 400, {"error": "command required"}
-    res = subprocess.run(cmd, shell=True, capture_output=True, text=True, cwd=WORKSPACE, timeout=30)
-    return 200, {"stdout": res.stdout, "stderr": res.stderr, "code": res.returncode}
+    # suporte a cd — atualiza CWD sem spawnar novo shell
+    stripped = cmd.strip()
+    if stripped.startswith("cd "):
+        target = stripped[3:].strip()
+        new_cwd = target if os.path.isabs(target) else os.path.normpath(os.path.join(_CWD[0], target))
+        if os.path.isdir(new_cwd):
+            _CWD[0] = new_cwd
+            return 200, {"stdout": "", "stderr": "", "code": 0, "cwd": _CWD[0]}
+        return 200, {"stdout": "", "stderr": f"cd: {target}: No such directory", "code": 1}
+    try:
+        res = subprocess.run(cmd, shell=True, capture_output=True, text=True,
+                             cwd=_CWD[0], timeout=timeout)
+        LIMIT = 8000
+        stdout = res.stdout
+        stderr = res.stderr
+        truncated = False
+        if len(stdout) > LIMIT:
+            stdout = stdout[:3000] + f"\n...[truncated {len(stdout)-LIMIT} chars]...\n" + stdout[-1000:]
+            truncated = True
+        return 200, {"stdout": stdout, "stderr": stderr[:2000], "code": res.returncode,
+                     "cwd": _CWD[0], "truncated": truncated}
+    except subprocess.TimeoutExpired:
+        return 200, {"stdout": "", "stderr": f"timeout after {timeout}s", "code": -1, "cwd": _CWD[0]}
 
 def _write_file(params):
     filename = params.get("filename", "")
@@ -36,7 +61,30 @@ def _write_file(params):
         f.write(content)
     return 200, {"status": "ok", "path": safe}
 
-_INTERNAL = {"execute_shell": _exec_shell, "write_file": _write_file}
+def _fs_edit(params):
+    file_path  = params.get("file_path", "")
+    old_string = params.get("old_string", "")
+    new_string = params.get("new_string", "")
+    if not file_path or old_string == "":
+        return 400, {"error": "file_path and old_string required"}
+    full = file_path if os.path.isabs(file_path) else os.path.join(_CWD[0], file_path)
+    safe = os.path.normpath(full)
+    try:
+        with open(safe, "r", errors="replace") as f:
+            content = f.read()
+        count = content.count(old_string)
+        if count == 0:
+            return 422, {"error": "old_string not found — read the file first and verify exact whitespace/indentation"}
+        if count > 1:
+            return 422, {"error": f"old_string matches {count} locations — expand context to make it unique"}
+        new_content = content.replace(old_string, new_string, 1)
+        with open(safe, "w") as f:
+            f.write(new_content)
+        return 200, {"status": "ok", "path": safe, "replacements": 1}
+    except Exception as e:
+        return 500, {"error": str(e)}
+
+_INTERNAL = {"execute_shell": _exec_shell, "write_file": _write_file, "fs_edit": _fs_edit}
 
 def _validate_code(params):
     code = params.get("code", "")
@@ -159,12 +207,24 @@ _INTERNAL["web_fetch"]  = _web_fetch
 _INTERNAL["web_search"] = _web_search
 
 def _read_file(params):
-    path = params.get("path", "")
+    path   = params.get("path", "")
+    offset = int(params.get("offset", 0))   # linha inicial (0-indexed)
+    limit  = int(params.get("limit", 200))  # max linhas
     if not path: return 400, {"error": "path required"}
-    full = path if os.path.isabs(path) else os.path.join(WORKSPACE, path)
+    full = path if os.path.isabs(path) else os.path.join(_CWD[0], path)
     safe = os.path.normpath(full)
     try:
-        with open(safe) as f: return 200, {"path": safe, "content": f.read()}
+        with open(safe, errors="replace") as f:
+            lines = f.readlines()
+        total   = len(lines)
+        chunk   = lines[offset: offset + limit]
+        numbered = "".join(f"{offset+i+1:4d} | {l}" for i, l in enumerate(chunk))
+        partial = (offset + limit) < total
+        result  = {"path": safe, "content": numbered, "total_lines": total,
+                   "offset": offset, "limit": limit}
+        if partial:
+            result["warning"] = f"PARTIAL view — {total-(offset+limit)} lines remaining, use offset={offset+limit}"
+        return 200, result
     except Exception as e: return 500, {"error": str(e)}
 
 def _list_dir(params):

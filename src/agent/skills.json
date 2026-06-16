@@ -117,5 +117,12 @@
     "params": [],
     "upstream": "internal_exec",
     "system_instruction": "SEMPRE chame esta skill primeiro ao iniciar uma nova sessão. Ela contém o estado completo do projeto, skills disponíveis e o que falta fazer."
+  },
+  {
+    "name": "fs_edit",
+    "description": "Edição atômica de arquivo por substituição exata de string (requer unicidade)",
+    "params": ["file_path", "old_string", "new_string"],
+    "upstream": "internal_exec",
+    "system_instruction": "Use para modificações cirúrgicas em arquivos existentes. old_string deve ser única no arquivo — inclua 3-4 linhas de contexto ao redor. Sempre chame read_file antes. Se retornar erro de count>1, expanda o old_string. Se count=0, verifique espaços e indentação exatos."
   }
 ]
