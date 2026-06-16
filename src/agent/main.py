@@ -1,6 +1,8 @@
-import json, urllib.request, urllib.error, http.server, os
+import json, urllib.request, urllib.error, http.server, subprocess, os
 
-PROXY = "http://localhost:15001"
+PROXY      = "http://localhost:15001"
+WORKSPACE  = "/tmp/workspace"
+os.makedirs(WORKSPACE, exist_ok=True)
 SKILLS_FILE = os.path.join(os.path.dirname(__file__), "skills.json")
 
 # --- carrega catálogo de skills ---
@@ -11,11 +13,38 @@ def list_skills():
     return [{"name": s["name"], "description": s["description"], "params": s["params"]}
             for s in _catalog.values()]
 
+# --- handlers locais (internal_exec) ---
+def _exec_shell(params):
+    cmd = params.get("command", "")
+    if not cmd:
+        return 400, {"error": "command required"}
+    res = subprocess.run(cmd, shell=True, capture_output=True, text=True, cwd=WORKSPACE, timeout=30)
+    return 200, {"stdout": res.stdout, "stderr": res.stderr, "code": res.returncode}
+
+def _write_file(params):
+    filename = params.get("filename", "")
+    content  = params.get("content", "")
+    if not filename:
+        return 400, {"error": "filename required"}
+    safe = os.path.normpath(os.path.join(WORKSPACE, filename))
+    if not safe.startswith(WORKSPACE):
+        return 403, {"error": "path traversal denied"}
+    parent = os.path.dirname(safe)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(safe, "w") as f:
+        f.write(content)
+    return 200, {"status": "ok", "path": safe}
+
+_INTERNAL = {"execute_shell": _exec_shell, "write_file": _write_file}
+
 # --- executor genérico de skill ---
 def run_skill(name, params, caller=None):
     skill = _catalog.get(name)
     if not skill:
         return 404, {"error": f"skill '{name}' not found"}
+    if skill["upstream"] == "internal_exec":
+        return _INTERNAL[name](params)
     path = skill["upstream"]
     for k, v in params.items():
         path = path.replace(f"{{{k}}}", str(v))

@@ -1,14 +1,6 @@
 [
-  {
-    "name": "get_patient",
-    "description": "Busca registro de paciente por ID",
-    "params": ["patient_id"],
-    "upstream": "/patients/{patient_id}"
-  },
-  {
-    "name": "list_patients",
-    "description": "Lista todos os pacientes",
-    "params": [],
-    "upstream": "/patients"
-  }
+  {"name": "get_patient",    "description": "Busca registro de paciente",          "params": ["patient_id"], "upstream": "/patients/{patient_id}"},
+  {"name": "list_patients",  "description": "Lista todos os pacientes",             "params": [],             "upstream": "/patients"},
+  {"name": "execute_shell",  "description": "Executa comando shell no sandbox /app","params": ["command"],    "upstream": "internal_exec"},
+  {"name": "write_file",     "description": "Cria/sobrescreve arquivo em /app",     "params": ["filename", "content"], "upstream": "internal_exec"}
 ]
