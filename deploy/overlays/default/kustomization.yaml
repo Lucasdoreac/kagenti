@@ -1,0 +1,14 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: default
+namePrefix: ""   # ex: "cliente-a-" para isolar múltiplos clientes no mesmo cluster
+resources:
+  - ../../base
+# patches:        # descomente para sobrescrever recursos por cliente
+#   - patch: |-
+#       - op: replace
+#         path: /spec/template/spec/containers/1/env/0/value
+#         value: "http://patient-records-cliente-a:80"
+#     target:
+#       kind: Deployment
+#       name: ai-agent-orchestrator

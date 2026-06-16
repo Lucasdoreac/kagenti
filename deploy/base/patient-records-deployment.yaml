@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: patient-records
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: patient-records
+  template:
+    metadata:
+      labels:
+        app: patient-records
+    spec:
+      containers:
+      - name: patient-records
+        image: python:3.11-slim
+        command: ["python3", "/app/api.py"]
+        ports:
+        - containerPort: 80
+        volumeMounts:
+        - name: api
+          mountPath: /app
+      volumes:
+      - name: api
+        configMap:
+          name: patient-records-api
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: patient-records
+spec:
+  selector:
+    app: patient-records
+  ports:
+  - port: 80
+    targetPort: 80

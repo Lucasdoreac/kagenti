@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-agent-orchestrator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ai-agent-orchestrator
+  template:
+    metadata:
+      labels:
+        app: ai-agent-orchestrator
+    spec:
+      containers:
+      - name: envoy
+        image: envoyproxy/envoy:v1.26-latest
+        ports:
+        - containerPort: 15001
+        volumeMounts:
+        - name: envoy-config
+          mountPath: /etc/envoy/envoy.yaml
+          subPath: envoy.yaml
+      - name: python
+        image: python:3.11-slim
+        command: ["python3", "/app/main.py"]
+        ports:
+        - containerPort: 8080
+        volumeMounts:
+        - name: agent-code
+          mountPath: /app
+      volumes:
+      - name: envoy-config
+        configMap:
+          name: obridge-config
+      - name: agent-code
+        configMap:
+          name: agent-code
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai-agent-orchestrator
+spec:
+  selector:
+    app: ai-agent-orchestrator
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
