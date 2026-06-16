@@ -40,5 +40,19 @@
     "params": [],
     "upstream": "internal_exec",
     "system_instruction": "Use antes de refatorar qualquer skill para entender o impacto. Verifique cycles antes de criar novas dependências entre skills."
+  },
+  {
+    "name": "web_fetch",
+    "description": "Busca e retorna o conteúdo de uma URL (texto/HTML)",
+    "params": ["url"],
+    "upstream": "internal_exec",
+    "system_instruction": "Use para ler documentação, páginas web ou APIs públicas. Retorna o texto bruto — parse conforme necessário."
+  },
+  {
+    "name": "web_search",
+    "description": "Pesquisa na web via DuckDuckGo e retorna lista de resultados",
+    "params": ["query"],
+    "upstream": "internal_exec",
+    "system_instruction": "Use para descobrir informações externas antes de tomar decisões. Prefira queries concisas em inglês para melhores resultados."
   }
 ]

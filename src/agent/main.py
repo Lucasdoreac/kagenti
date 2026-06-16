@@ -108,6 +108,56 @@ def _analyze_dependency_graph(params):
 
 _INTERNAL["analyze_dependency_graph"] = _analyze_dependency_graph
 
+def _web_fetch(params):
+    url = params.get("url", "")
+    if not url:
+        return 400, {"error": "url required"}
+    try:
+        import html.parser
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            raw = r.read().decode(errors="replace")
+        # strip tags para retornar texto legível
+        class _S(html.parser.HTMLParser):
+            def __init__(self): super().__init__(); self.parts = []; self._skip = False
+            def handle_starttag(self, t, a): self._skip = t in ("script","style")
+            def handle_endtag(self, t): self._skip = False
+            def handle_data(self, d):
+                if not self._skip and d.strip(): self.parts.append(d.strip())
+        p = _S(); p.feed(raw)
+        text = "\n".join(p.parts)[:8000]
+        return 200, {"url": url, "text": text}
+    except Exception as e:
+        return 500, {"error": str(e)}
+
+def _web_search(params):
+    query = params.get("query", "")
+    if not query:
+        return 400, {"error": "query required"}
+    try:
+        import html.parser, urllib.parse, re
+        url = "https://lite.duckduckgo.com/lite/?q=" + urllib.parse.quote_plus(query)
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            raw = r.read().decode(errors="replace")
+        results = []
+        # extrai pares link + snippet da tabela do lite
+        links    = re.findall(r'uddg=([^&"]+)', raw)
+        titles   = re.findall(r"class='result-link'>(.*?)</a>", raw)
+        snippets = re.findall(r"class='result-snippet'>(.*?)</span>", raw, re.S)
+        for i in range(min(5, len(titles))):
+            results.append({
+                "url":     urllib.parse.unquote(links[i]) if i < len(links) else "",
+                "title":   re.sub(r"<[^>]+>", "", titles[i]).strip(),
+                "snippet": re.sub(r"<[^>]+>", "", snippets[i]).strip() if i < len(snippets) else ""
+            })
+        return 200, {"query": query, "results": results}
+    except Exception as e:
+        return 500, {"error": str(e)}
+
+_INTERNAL["web_fetch"]  = _web_fetch
+_INTERNAL["web_search"] = _web_search
+
 # --- executor genérico de skill ---
 def run_skill(name, params, caller=None):
     skill = _catalog.get(name)
