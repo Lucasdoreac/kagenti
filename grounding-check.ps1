@@ -1,51 +1,52 @@
-# grounding-check.ps1
-# Força a parada imediata em caso de erro, garantindo zero workarounds.
 $ErrorActionPreference = "Stop"
 
-Write-Output "[GROUNDING] Iniciando sondagem determinística do ambiente..."
-
-# 1. Validação de Ferramentas Essenciais no $env:PATH
-$requiredBinaries = @("kubectl", "curl")
-foreach ($bin in $requiredBinaries) {
-    if ($null -eq (Get-Command $bin -ErrorAction SilentlyContinue)) {
-        Write-Error "[FALHA ESTRUTURAL] Dependência crítica ausente: $bin. Altere o PATH no nível do SO. Abortando."
-        exit 1
-    }
-}
-Write-Output " [OK] Binários de infraestrutura detectados."
-
-# 2. Validação de Conexão com o Control Plane do Kubernetes
-Write-Output "[GROUNDING] Sondando soberania e acesso ao cluster..."
-try {
-    # Tenta resgatar os nós com timeout estrito para evitar hangs
-    $nodes = kubectl get nodes --request-timeout="5s" 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        throw $nodes
-    }
-} catch {
-    Write-Error "[FALHA ESTRUTURAL] Perda de comunicação com o cluster Kubernetes ou Kubeconfig ausente. Causa raiz: $($_.Exception.Message)"
-    exit 1
-}
-Write-Output " [OK] Cluster K8s acessível e responsivo."
-
-# 3. Prevenção de Colisão e Idempotência (Verifica resquícios de instalações anteriores)
-$namespaces = kubectl get namespaces -o jsonpath='{.items[*].metadata.name}'
-
-if ($namespaces -match "\bistio-system\b") {
-    Write-Warning "[ALERTA DE ESTADO] Namespace 'istio-system' detectado. Risco de violação de idempotência. Certifique-se de que não há state drift antes de injetar o istioctl."
+function Check($label, $block) {
+    try { & $block; Write-Output " [OK] $label" }
+    catch { Write-Output " [FAIL] $label — $($_.Exception.Message)" }
 }
 
-if ($namespaces -match "\bspire\b") {
-    Write-Warning "[ALERTA DE ESTADO] Namespace 'spire' detectado. Identidades criptográficas antigas podem contaminar a nova implantação."
+Write-Output "`n=== kagenti grounding-check ===`n"
+
+# Ferramentas
+Check "kubectl no PATH"  { Get-Command kubectl | Out-Null }
+Check "gh no PATH"       { Get-Command gh | Out-Null }
+
+# Cluster
+Check "cluster acessivel" { kubectl get nodes --request-timeout=5s | Out-Null }
+
+# Deployments prontos
+Check "ai-agent-orchestrator ready" {
+    $r = kubectl get deployment ai-agent-orchestrator -o jsonpath='{.status.readyReplicas}'
+    if ($r -ne "1") { throw "readyReplicas=$r" }
+}
+Check "patient-records ready" {
+    $r = kubectl get deployment patient-records -o jsonpath='{.status.readyReplicas}'
+    if ($r -ne "1") { throw "readyReplicas=$r" }
 }
 
-# 4. Validação de Contexto de Diretório
-if (-not (Test-Path ".\kagent-infra" -ErrorAction SilentlyContinue)) {
-    Write-Output "[GROUNDING] Criando diretório de contenção local 'kagent-infra'..."
-    New-Item -ItemType Directory -Force -Path ".\kagent-infra" | Out-Null
+# Endpoints funcionais
+Check "agent /healthz" {
+    $out = kubectl exec deploy/ai-agent-orchestrator -c python -- `
+        python3 -c "import urllib.request; print(urllib.request.urlopen('http://localhost:8080/healthz',timeout=5).read().decode())"
+    if ($out -notmatch "ok") { throw $out }
 }
-Set-Location ".\kagent-infra"
+Check "agent /triage patient_id=2" {
+    $out = kubectl exec deploy/ai-agent-orchestrator -c python -- `
+        python3 -c "
+import json,urllib.request
+req=urllib.request.Request('http://localhost:8080/triage',data=json.dumps({'patient_id':'2'}).encode(),headers={'Content-Type':'application/json'},method='POST')
+print(urllib.request.urlopen(req,timeout=5).read().decode())"
+    if ($out -notmatch "ALERTA") { throw $out }
+}
+Check "patient-records /patients" {
+    $out = kubectl exec deploy/patient-records -- `
+        python3 -c "import urllib.request; print(urllib.request.urlopen('http://localhost:80/patients',timeout=5).read().decode())"
+    if ($out -notmatch "Ada Lovelace") { throw $out }
+}
 
-Write-Output "======================================================="
-Write-Output "[GROUNDING SUCCESS] Ambiente validado. Vetor liberado."
-Write-Output "======================================================="
+# Alertas de estado
+$ns = kubectl get namespaces -o jsonpath='{.items[*].metadata.name}'
+if ($ns -match "\bistio-system\b") { Write-Warning "[ALERTA] istio-system detectado — risco de conflito de sidecar" }
+if ($ns -match "\bspire\b")        { Write-Warning "[ALERTA] spire detectado — identidades antigas podem contaminar" }
+
+Write-Output "`n=== done ===`n"
