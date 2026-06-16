@@ -223,6 +223,41 @@ for _name, _fn in [("read_file",_read_file),("list_dir",_list_dir),
                    ("grep",_grep),("glob",_glob),("git",_git)]:
     _INTERNAL[_name] = _fn
 
+# --- memory e todo (estado em memória do processo) ---
+_MEMORY: dict = {}
+_TODOS:  list = []
+
+def _memory_set(params):
+    k, v = params.get("key",""), params.get("value","")
+    if not k: return 400, {"error": "key required"}
+    _MEMORY[k] = v
+    return 200, {"stored": k}
+
+def _memory_get(params):
+    k = params.get("key","")
+    if k == "*": return 200, {"memory": _MEMORY}
+    if k not in _MEMORY: return 404, {"error": f"key '{k}' not found"}
+    return 200, {"key": k, "value": _MEMORY[k]}
+
+def _todo_write(params):
+    action = params.get("action", "list")
+    task   = params.get("task", "")
+    if action == "add":
+        if not task: return 400, {"error": "task required"}
+        _TODOS.append({"task": task, "done": False})
+        return 200, {"todos": _TODOS}
+    if action == "complete":
+        for t in _TODOS:
+            if t["task"] == task: t["done"] = True
+        return 200, {"todos": _TODOS}
+    if action == "clear":
+        _TODOS.clear()
+        return 200, {"todos": []}
+    return 200, {"todos": _TODOS}  # list
+
+for _n, _f in [("memory_set",_memory_set),("memory_get",_memory_get),("todo_write",_todo_write)]:
+    _INTERNAL[_n] = _f
+
 # --- executor genérico de skill ---
 def run_skill(name, params, caller=None):
     skill = _catalog.get(name)
@@ -274,19 +309,66 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_json(404, {"error": "not found"})
 
     def do_POST(self):
-        if self.path != "/run":
-            return self.send_json(404, {"error": "not found"})
         length = int(self.headers.get("Content-Length", 0))
-        body = json.loads(self.rfile.read(length)) if length else {}
-        skill_name = body.get("skill")
-        params     = body.get("params", {})
-        caller     = self.headers.get("X-Delegation-Chain", "unknown")
+        body   = json.loads(self.rfile.read(length)) if length else {}
+        caller = self.headers.get("X-Delegation-Chain", "unknown")
         if caller == "unknown":
             return self.send_json(403, {"error": "missing X-Delegation-Chain — requests must pass through OBridge"})
-        if not skill_name:
-            return self.send_json(400, {"error": "skill required"})
-        code, result = run_skill(skill_name, params, caller)
-        self.send_json(code, {"caller": caller, "skill": skill_name, "result": result})
+
+        # --- /run: execução direta de skill ---
+        if self.path == "/run":
+            skill_name = body.get("skill")
+            params     = body.get("params", {})
+            if not skill_name:
+                return self.send_json(400, {"error": "skill required"})
+            code, result = run_skill(skill_name, params, caller)
+            return self.send_json(code, {"caller": caller, "skill": skill_name, "result": result})
+
+        # --- /chat: loop ReAct via Ollama ---
+        if self.path == "/chat":
+            import sys, os as _os
+            sys.path.insert(0, _os.path.dirname(__file__))
+            try:
+                import llm, cleaner
+            except ImportError as e:
+                return self.send_json(503, {"error": f"llm/cleaner not available: {e}"})
+
+            if not llm.available():
+                return self.send_json(503, {"error": "Ollama unreachable", "hint": f"start ollama at {llm.OLLAMA_HOST}"})
+
+            prompt   = body.get("prompt", "")
+            model    = body.get("model", llm.DEFAULT_MODEL)
+            max_iter = int(body.get("max_iter", 10))
+            if not prompt:
+                return self.send_json(400, {"error": "prompt required"})
+
+            relevant  = cleaner.select(prompt, _catalog)
+            tools_ctx = cleaner.format_for_llm(relevant)
+            messages  = [{"role": "user", "content": prompt}]
+            trace     = []
+
+            for i in range(max_iter):
+                decision = llm.call(messages, model=model, tools_context=tools_ctx)
+                trace.append({"iter": i+1, "decision": decision})
+
+                action = decision.get("action", "final_answer")
+                params = decision.get("params", {})
+
+                if action == "final_answer":
+                    return self.send_json(200, {
+                        "caller": caller, "answer": params.get("text",""),
+                        "iterations": i+1, "trace": trace
+                    })
+
+                code, result = run_skill(action, params, caller)
+                obs = {"skill": action, "result": result}
+                messages.append({"role": "assistant", "content": json.dumps(decision)})
+                messages.append({"role": "user",      "content": f"Observation: {json.dumps(obs)}"})
+
+            return self.send_json(200, {"caller": caller, "answer": "max iterations reached",
+                                        "iterations": max_iter, "trace": trace})
+
+        self.send_json(404, {"error": "not found"})
 
 if __name__ == "__main__":
     server = http.server.HTTPServer(("0.0.0.0", 8080), Handler)

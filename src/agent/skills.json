@@ -89,5 +89,26 @@
     "params": ["command"],
     "upstream": "internal_exec",
     "system_instruction": "Use apenas comandos não-destrutivos por padrão (status, diff, log, show). Para add/commit, confirme com o usuário antes. Nunca execute push ou reset --hard sem instrução explícita."
+  },
+  {
+    "name": "memory_set",
+    "description": "Armazena um valor K/V na memória persistente do agente (dura enquanto o pod viver)",
+    "params": ["key", "value"],
+    "upstream": "internal_exec",
+    "system_instruction": "Use para salvar fatos importantes entre chamadas: planos, resultados intermediários, decisões tomadas. Prefira chaves descritivas como 'plano_atual' ou 'ultimo_arquivo_editado'."
+  },
+  {
+    "name": "memory_get",
+    "description": "Recupera um valor da memória pelo key (ou lista todas as keys se key=*)",
+    "params": ["key"],
+    "upstream": "internal_exec",
+    "system_instruction": "Use no início de uma tarefa para recuperar contexto anterior. Use key='*' para listar todas as entradas disponíveis."
+  },
+  {
+    "name": "todo_write",
+    "description": "Gerencia lista de tarefas do agente (action: add|complete|list|clear)",
+    "params": ["action", "task"],
+    "upstream": "internal_exec",
+    "system_instruction": "Use para decompor tarefas complexas. Antes de executar um plano multi-step: add cada passo. Marque complete após cada execução bem-sucedida. Use list para verificar o que falta."
   }
 ]
