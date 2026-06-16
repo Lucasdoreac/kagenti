@@ -61,7 +61,52 @@ def _validate_code(params):
         os.unlink(tmp)  # ruff não instalado — ast.parse já passou, aceita
     return 200, {"valid": True}
 
-_INTERNAL["validate_code"] = _validate_code
+def _analyze_dependency_graph(params):
+    import ast as _ast
+
+    # Nós: todas as skills do catálogo
+    nodes = list(_catalog.keys())
+
+    # Arestas: parse do main.py buscando quais funções _INTERNAL chamam subprocess/urlopen
+    edges = []
+    src_path = os.path.join(os.path.dirname(__file__), "main.py")
+    try:
+        with open(src_path) as f:
+            tree = _ast.parse(f.read())
+        # Mapeia cada função interna para as calls que ela faz
+        for node in _ast.walk(tree):
+            if isinstance(node, _ast.FunctionDef) and node.name.startswith("_"):
+                skill_name = node.name.lstrip("_")
+                if skill_name in _catalog:
+                    for child in _ast.walk(node):
+                        if isinstance(child, _ast.Call):
+                            if isinstance(child.func, _ast.Attribute):
+                                edges.append({"from": skill_name, "calls": child.func.attr})
+    except Exception as e:
+        edges = [{"error": str(e)}]
+
+    # Arestas de segurança: regras do catálogo (upstream)
+    policy = []
+    for name, skill in _catalog.items():
+        policy.append({
+            "skill": name,
+            "upstream": skill["upstream"],
+            "requires_delegation": True
+        })
+
+    try:
+        import networkx as nx
+        G = nx.DiGraph()
+        G.add_nodes_from(nodes)
+        for e in edges:
+            if "from" in e and "calls" in e:
+                G.add_edge(e["from"], e["calls"])
+        cycles = list(nx.simple_cycles(G))
+        return 200, {"nodes": list(G.nodes), "edges": list(G.edges), "cycles": cycles, "policy": policy}
+    except ImportError:
+        return 200, {"nodes": nodes, "edges": edges, "policy": policy, "note": "networkx not installed — install for cycle detection"}
+
+_INTERNAL["analyze_dependency_graph"] = _analyze_dependency_graph
 
 # --- executor genérico de skill ---
 def run_skill(name, params, caller=None):

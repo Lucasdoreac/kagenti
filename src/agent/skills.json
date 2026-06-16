@@ -33,5 +33,12 @@
     "params": ["code"],
     "upstream": "internal_exec",
     "system_instruction": "Sempre execute esta skill antes de write_file quando o conteúdo for código Python. Só prossiga com write_file se result.valid for true."
+  },
+  {
+    "name": "analyze_dependency_graph",
+    "description": "Retorna grafo de dependências das skills (nós, arestas, policy)",
+    "params": [],
+    "upstream": "internal_exec",
+    "system_instruction": "Use antes de refatorar qualquer skill para entender o impacto. Verifique cycles antes de criar novas dependências entre skills."
   }
 ]
