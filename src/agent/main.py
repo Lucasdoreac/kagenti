@@ -378,7 +378,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             trace     = []
 
             for i in range(max_iter):
-                decision = llm.call(messages, model=model, tools_context=tools_ctx)
+                decision = llm.call(llm.trim_history(messages), model=model, tools_context=tools_ctx)
                 trace.append({"iter": i+1, "decision": decision})
 
                 action = decision.get("action", "final_answer")

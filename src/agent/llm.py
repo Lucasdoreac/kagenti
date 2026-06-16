@@ -3,6 +3,22 @@ import json, urllib.request, urllib.error, os
 
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://host.docker.internal:11434")
 DEFAULT_MODEL = os.environ.get("OLLAMA_MODEL", "gemma3:12b")
+CONTEXT_CHAR_LIMIT = int(os.environ.get("CONTEXT_CHAR_LIMIT", "12000"))  # ~3k tokens
+
+def trim_history(messages: list, limit: int = CONTEXT_CHAR_LIMIT) -> list:
+    """Mantém o primeiro user message + os N mais recentes que cabem no limite."""
+    if not messages:
+        return messages
+    total = sum(len(m.get("content","")) for m in messages)
+    if total <= limit:
+        return messages
+    # sempre preserva o primeiro (prompt original) e vai removendo pares do meio
+    first = messages[:1]
+    rest  = messages[1:]
+    while rest and sum(len(m.get("content","")) for m in first + rest) > limit:
+        # remove o par mais antigo (assistant + observation)
+        rest = rest[2:] if len(rest) >= 2 else rest[1:]
+    return first + rest
 
 MAESTRO_SYSTEM = """You are an autonomous agent. You must respond ONLY with a JSON object.
 
